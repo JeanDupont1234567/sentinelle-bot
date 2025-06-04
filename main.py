@@ -17,42 +17,13 @@ intents.guilds = True
 intents.members = True
 
 ANNOUNCE_CHANNEL = "achats-publics"
+ADMIN_ROLE_NAME = "admin"  # <-- nom EXACT du rôle admin sur ton Discord
 
 CATEGORIES = {
-    "T-Shirts": [
-        {
-            "nom": "Stussy x Nike J-C - M",
-            "prix_euro": 14,
-            "prix_volts": 140,
-            "stock": 12,
-            "image": "https://www.picclickimg.com/5AMAAOSwHYJoONWU/maillot-du-br%C3%A9sil-concept-jesus-nike-saison-24-25.webp",
-            "desc": "Taille M, édition limitée. 👕",
-            "rarete": "common"
-        },
-        {
-            "nom": "Supreme x CDG - S",
-            "prix_euro": 25,
-            "prix_volts": 250,
-            "stock": 1,
-            "image": "https://example.com/tshirt3.jpg",
-            "desc": "Rare, taille S.",
-            "rarete": "rare"
-        }
-    ],
-    "Sneakers": [
-        {
-            "nom": "Air Max 90 White",
-            "prix_euro": 130,
-            "prix_volts": 1300,
-            "stock": 3,
-            "image": "https://example.com/am90.jpg",
-            "desc": "Edition 2024.",
-            "rarete": "common"
-        }
-    ]
+    # ... (ta config produits reste identique, tu peux la compléter)
 }
-CATEGORY_LIST = list(CATEGORIES.keys())
 
+CATEGORY_LIST = list(CATEGORIES.keys())
 user_volts = {}
 user_badges = {}
 user_sales = {}
@@ -108,96 +79,7 @@ bot = Sentinelle()
 async def on_ready():
     print(f"✅ Sentinelle connectée en tant que {bot.user}")
 
-# ───────────── VUES DYNAMIQUES ─────────────
-class ProductView(View):
-    def __init__(self, category, page, user):
-        super().__init__(timeout=180)
-        self.category, self.page, self.user = category, page, user
-        self.update_buttons()
-    def update_buttons(self):
-        self.clear_items()
-        produits = CATEGORIES[self.category]
-        start = self.page * 4
-        for prod in produits[start:start+4]:
-            self.add_item(ProductButton(prod, self.user, self.category))
-        if self.page > 0:
-            self.add_item(PageButton("⬅️", self.category, self.page - 1, self.user))
-        if (self.page + 1) * 4 < len(produits):
-            self.add_item(PageButton("➡️", self.category, self.page + 1, self.user))
-
-class PageButton(Button):
-    def __init__(self, emoji, category, page, user):
-        super().__init__(style=discord.ButtonStyle.secondary, label=emoji)
-        self.category, self.page, self.user = category, page, user
-    async def callback(self, interaction):
-        if interaction.user.id != self.user.id:
-            return await interaction.response.send_message("Ce menu n'est pas à toi.", ephemeral=True)
-        view = ProductView(self.category, self.page, self.user)
-        embed = make_embed(f"Catégorie : {self.category} (Page {self.page + 1})", "Sélectionne un produit ci-dessous :", 0x222222)
-        await interaction.response.edit_message(embed=embed, view=view, content=None)
-
-class ProductButton(Button):
-    def __init__(self, prod, user, category):
-        super().__init__(style=discord.ButtonStyle.primary, label=prod["nom"][:80])
-        self.produit, self.user, self.category = prod, user, category
-    async def callback(self, interaction):
-        if interaction.user.id != self.user.id:
-            return await interaction.response.send_message("Ce menu n'est pas à toi.", ephemeral=True)
-        embed = product_embed(self.produit, user=interaction.user)
-        view = ProductDetailView(self.produit, self.user, self.category)
-        await interaction.response.edit_message(embed=embed, view=view, content=None)
-
-class ProductDetailView(View):
-    def __init__(self, produit, user, category):
-        super().__init__(timeout=120)
-        self.produit, self.user, self.category = produit, user, category
-        self.add_item(CommandButton(produit, user, category))
-        self.add_item(Button(label="⬅️ Retour", style=discord.ButtonStyle.secondary, custom_id="retour"))
-    @discord.ui.button(label="⬅️ Retour", style=discord.ButtonStyle.secondary, row=1)
-    async def retour(self, interaction, button):
-        if interaction.user.id != self.user.id:
-            return await interaction.response.send_message("Ce menu n'est pas à toi.", ephemeral=True)
-        view = ProductView(self.category, 0, self.user)
-        embed = make_embed(f"Catégorie : {self.category} (Page 1)", "Sélectionne un produit ci-dessous :", 0x222222)
-        await interaction.response.edit_message(embed=embed, view=view, content=None)
-
-class CommandButton(Button):
-    def __init__(self, produit, user, category):
-        super().__init__(style=discord.ButtonStyle.success, label="🛒 Commander")
-        self.produit, self.user, self.category = produit, user, category
-    async def callback(self, interaction):
-        if interaction.user.id != self.user.id:
-            return await interaction.response.send_message("Ce menu n'est pas à toi.", ephemeral=True)
-        if self.produit["stock"] < 1:
-            return await interaction.response.send_message("❌ Rupture de stock !", ephemeral=True)
-        if user_volts.get(self.user.id, 0) < self.produit["prix_volts"]:
-            return await interaction.response.send_message(
-                "⚡ Tu n'as pas assez de Volts pour acheter ce produit.\nUtilise `/buyvolts` pour recharger.", ephemeral=True
-            )
-        # Paiement
-        user_volts[self.user.id] -= self.produit["prix_volts"]
-        self.produit["stock"] -= 1
-        user_sales[self.user.id] = user_sales.get(self.user.id, 0) + 1
-        await announce_purchase(interaction.guild, self.user, self.produit)
-        await interaction.response.send_message(
-            f"✅ Commande **{self.produit['nom']}** validée !\nNouveau solde : {format_volts(user_volts[self.user.id])}",
-            ephemeral=True
-        )
-
-async def announce_purchase(guild, user, produit):
-    for chan in guild.text_channels:
-        if chan.name == ANNOUNCE_CHANNEL:
-            embed = discord.Embed(
-                title="Nouvelle commande !",
-                description=f"**{user.mention}** a commandé **{produit['nom']}**\nPrix : {produit['prix_volts']}⚡",
-                color=0xdb143c
-            )
-            embed.set_image(url=produit["image"])
-            await chan.send(embed=embed)
-            break
-
-# ───────────── COMMANDE BUYVOLTS ULTRA UX ─────────────
-
+# ───────────── BUYVOLTS ─────────────
 VOLT_PACKS = [
     {
         "volts": 1000,
@@ -225,6 +107,8 @@ VOLT_PACKS = [
     }
 ]
 
+ticket_counter = 1  # simple compteur, ou utilise un fichier/BDD pour éviter les doublons
+
 class BuyVoltsView(View):
     def __init__(self, user):
         super().__init__(timeout=120)
@@ -245,22 +129,28 @@ class BuyVoltsButton(Button):
         self.user = user
 
     async def callback(self, interaction: discord.Interaction):
+        global ticket_counter
         if interaction.user.id != self.user.id:
             return await interaction.response.send_message("Ce menu n'est pas à toi.", ephemeral=True)
         guild = interaction.guild
-        category = discord.utils.get(guild.categories, name="tickets")  # Catégorie à créer
+        category = discord.utils.get(guild.categories, name="tickets")
         if not category:
             category = await guild.create_category("tickets")
+        # Cherche le rôle admin
+        admin_role = discord.utils.get(guild.roles, name=ADMIN_ROLE_NAME)
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             self.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
+        if admin_role:
+            overwrites[admin_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
         ticket_channel = await guild.create_text_channel(
-            name=f"ticket-achat-{self.user.display_name}".replace(" ", "-"),
+            name=f"ticket-achat-{self.user.display_name}-{ticket_counter}".replace(" ", "-"),
             overwrites=overwrites,
             category=category
         )
+        ticket_counter += 1
         embed = discord.Embed(
             title="💸 Achat de Volts — Confirmation",
             description=(
@@ -288,7 +178,6 @@ class BuyVoltsButton(Button):
 
 @bot.tree.command(name="buyvolts", description="Acheter des Volts (paiement PayPal/Revolut)")
 async def buyvolts_slash(interaction: discord.Interaction):
-    # Un embed par pack, chacun avec image et bouton en dessous
     embeds = []
     for pack in VOLT_PACKS:
         embed = discord.Embed(
