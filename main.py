@@ -15,7 +15,7 @@ intents.message_content = True
 intents.guilds = True
 intents.members = True
 
-GUILD_ID = None  # Mets ton Guild ID si tu veux limiter la synchro
+GUILD_ID = 1376941684147097660  # Mets ton Guild ID ici !
 
 # --- Exemples de produits, catégories (à remplacer par les données Google Sheets plus tard) ---
 CATEGORIES = {
@@ -95,7 +95,6 @@ bot = Sentinelle()
 @bot.event
 async def on_ready():
     print(f"{bot.user} est prêt et connecté à Discord.")
-
 
 # --- Canal pour notifications d'achat ---
 ANNOUNCE_CHANNEL = "achats-publics"  # à créer sur ton serveur
