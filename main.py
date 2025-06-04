@@ -202,25 +202,25 @@ VOLT_PACKS = [
     {
         "volts": 1000,
         "prix": 8.99,
-        "image_url": "https://yourcdn.com/voltpack-1000.png",  # mets ton image ici
+        "image_url": "https://cdn.discordapp.com/attachments/1379938265079218206/1379938998880964720/100V.png?ex=68420fd7&is=6840be57&hm=f54aa1a53b5a370ef519d1d81922e472bfd621959bfa2ba389cb5aa9f8df53fd&",  # mets ton image ici
         "desc": "Idéal pour tester la puissance ⚡"
     },
     {
         "volts": 2800,
         "prix": 22.99,
-        "image_url": "https://yourcdn.com/voltpack-2800.png",
+        "image_url": "https://cdn.discordapp.com/attachments/1379938265079218206/1379939121375609023/280V.png?ex=68420ff4&is=6840be74&hm=72cfc007c1da2988c143530a5e711f969e88299028acceab709e22a67ec65057&",
         "desc": "Prix mini par Volt, boost rapide"
     },
     {
         "volts": 5000,
         "prix": 36.99,
-        "image_url": "https://yourcdn.com/voltpack-5000.png",
+        "image_url": "https://cdn.discordapp.com/attachments/1379938265079218206/1379939202346520730/500V.png?ex=68421007&is=6840be87&hm=e48d25232ff02a440195d9ea64afaafe5b48e8e87bd7f11e9b035779b92b8940&",
         "desc": "Gros pack pour gros joueurs 💎"
     },
     {
         "volts": 13500,
         "prix": 89.99,
-        "image_url": "https://yourcdn.com/voltpack-13500.png",
+        "image_url": "https://cdn.discordapp.com/attachments/1379938265079218206/1379941340795764817/1300V.png?ex=68421205&is=6840c085&hm=863dd0ced9741c861372dd8f5d940c6df01d0223d4db631ae55401ccfdc8f445&",
         "desc": "La vraie puissance. Tu deviens une Légende."
     }
 ]
