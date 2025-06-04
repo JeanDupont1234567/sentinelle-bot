@@ -171,12 +171,13 @@ class CommandButton(Button):
         if self.produit["stock"] < 1:
             return await interaction.response.send_message("❌ Rupture de stock !", ephemeral=True)
         if user_volts.get(self.user.id, 0) < self.produit["prix_volts"]:
-            return await interaction.response.send_message("⚡ Tu n'as pas assez de Volts pour acheter ce produit.", ephemeral=True)
+            return await interaction.response.send_message(
+                "⚡ Tu n'as pas assez de Volts pour acheter ce produit.\nUtilise `/buyvolts` pour recharger.", ephemeral=True
+            )
         # Paiement
         user_volts[self.user.id] -= self.produit["prix_volts"]
         self.produit["stock"] -= 1
         user_sales[self.user.id] = user_sales.get(self.user.id, 0) + 1
-        # Annonce
         await announce_purchase(interaction.guild, self.user, self.produit)
         await interaction.response.send_message(
             f"✅ Commande **{self.produit['nom']}** validée !\nNouveau solde : {format_volts(user_volts[self.user.id])}",
@@ -195,7 +196,122 @@ async def announce_purchase(guild, user, produit):
             await chan.send(embed=embed)
             break
 
-# ───────────── COMMANDES PRINCIPALES ─────────────
+# ───────────── COMMANDE BUYVOLTS ULTRA UX ─────────────
+
+VOLT_PACKS = [
+    {
+        "volts": 1000,
+        "prix": 8.99,
+        "image_url": "https://yourcdn.com/voltpack-1000.png",  # mets ton image ici
+        "desc": "Idéal pour tester la puissance ⚡"
+    },
+    {
+        "volts": 2800,
+        "prix": 22.99,
+        "image_url": "https://yourcdn.com/voltpack-2800.png",
+        "desc": "Prix mini par Volt, boost rapide"
+    },
+    {
+        "volts": 5000,
+        "prix": 36.99,
+        "image_url": "https://yourcdn.com/voltpack-5000.png",
+        "desc": "Gros pack pour gros joueurs 💎"
+    },
+    {
+        "volts": 13500,
+        "prix": 89.99,
+        "image_url": "https://yourcdn.com/voltpack-13500.png",
+        "desc": "La vraie puissance. Tu deviens une Légende."
+    }
+]
+
+class BuyVoltsView(View):
+    def __init__(self, user):
+        super().__init__(timeout=120)
+        self.user = user
+        for pack in VOLT_PACKS:
+            btn = BuyVoltsButton(pack, user)
+            self.add_item(btn)
+
+class BuyVoltsButton(Button):
+    def __init__(self, pack, user):
+        super().__init__(
+            label=f"{pack['volts']}⚡ — {pack['prix']}€",
+            style=discord.ButtonStyle.success,
+            custom_id=f"buyvolts_{pack['volts']}",
+            row=0
+        )
+        self.pack = pack
+        self.user = user
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            return await interaction.response.send_message("Ce menu n'est pas à toi.", ephemeral=True)
+        guild = interaction.guild
+        category = discord.utils.get(guild.categories, name="tickets")  # Catégorie à créer
+        if not category:
+            category = await guild.create_category("tickets")
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            self.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        }
+        ticket_channel = await guild.create_text_channel(
+            name=f"ticket-achat-{self.user.display_name}".replace(" ", "-"),
+            overwrites=overwrites,
+            category=category
+        )
+        embed = discord.Embed(
+            title="💸 Achat de Volts — Confirmation",
+            description=(
+                f"**{self.user.mention} souhaite acheter**\n\n"
+                f"**{self.pack['volts']} Volts** pour **{self.pack['prix']}€**\n"
+                f"{self.pack['desc']}\n\n"
+                "Pour finaliser l’achat, il faut posséder un compte **PayPal (paiement en ami)** "
+                "ou **Revolut (virement entre amis)**.\n"
+                "Dès que le paiement est validé, tes Volts sont crédités !\n\n"
+                "👉 **Envoie ta preuve de paiement ici.**\n"
+                "*Un admin prendra le relais rapidement.*"
+            ),
+            color=0xdb143c
+        )
+        embed.set_image(url=self.pack["image_url"])
+        embed.set_footer(text="La Planque • Sentinelle")
+        await ticket_channel.send(
+            content=f"{self.user.mention} Ticket ouvert pour achat de Volts.",
+            embed=embed
+        )
+        await interaction.response.send_message(
+            f"✅ Ticket d’achat ouvert ici : {ticket_channel.mention}\nMerci de suivre les instructions dans le salon !",
+            ephemeral=True
+        )
+
+@bot.tree.command(name="buyvolts", description="Acheter des Volts (paiement PayPal/Revolut)")
+async def buyvolts_slash(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="⚡ Boutique Volts",
+        description=(
+            "Sélectionne le pack qui te correspond.\n"
+            "Paiement **PayPal** (entre amis) ou **Revolut** accepté.\n"
+            "*Clique sur un bouton pour ouvrir un ticket avec un admin.*"
+        ),
+        color=0x00ffff
+    )
+    embed.set_thumbnail(url="https://yourcdn.com/logo-premium.png")  # Branding principal ici
+    for pack in VOLT_PACKS:
+        embed.add_field(
+            name=f"{pack['volts']} Volts — {pack['prix']}€",
+            value=f"{pack['desc']}\n",
+            inline=False
+        )
+    embed.set_footer(text="La Planque • Sentinelle")
+    await interaction.response.send_message(
+        embed=embed,
+        view=BuyVoltsView(interaction.user),
+        ephemeral=True
+    )
+
+# ───────────── COMMANDES UTILISATEURS ─────────────
 @bot.tree.command(name="shop", description="Ouvre la boutique interactive")
 async def shop_slash(interaction: discord.Interaction):
     select = Select(
@@ -242,15 +358,6 @@ async def profil_slash(interaction: discord.Interaction):
     embed.add_field(name="Ventes réalisées", value=sales, inline=True)
     embed.add_field(name="Badges", value=badges, inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@bot.tree.command(name="buyvolts", description="Achète des Volts (mock, paiement réel à connecter)")
-@app_commands.describe(amount="Nombre de Volts à acheter")
-async def buyvolts_slash(interaction: discord.Interaction, amount: int):
-    if amount < 100:
-        return await interaction.response.send_message("Minimum d'achat : 100 Volts.", ephemeral=True)
-    # Ici tu ajoutes l'intégration paiement Stripe, Paypal, etc.
-    user_volts[interaction.user.id] = user_volts.get(interaction.user.id, 0) + amount
-    await interaction.response.send_message(f"✅ Tu as acheté **{amount} Volts** ! Nouveau solde : {format_volts(user_volts[interaction.user.id])}", ephemeral=True)
 
 # ───────────── COMMANDES ADMIN (gestion Volts) ─────────────
 @bot.tree.command(name="givevolts", description="(Admin) Donne des Volts à un membre")
