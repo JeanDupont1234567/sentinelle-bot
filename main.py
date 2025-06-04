@@ -1,26 +1,20 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
-from discord.ui import View, Button, Select
+from discord.ui import View, Button
 import os
 import random
 from dotenv import load_dotenv
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ───────────── CONFIGURATION DE BASE ─────────────
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = 1376941684147097660
-
-intents = discord.Intents.default()
-intents.message_content = True
-intents.guilds = True
-intents.members = True
-
+ADMIN_ROLE_ID = 1376941690309976065  # Remplace par l’ID du rôle admin de ton serveur
 ANNOUNCE_CHANNEL = "achats-publics"
 
-# Liens images packs (à mettre à jour)
 VOLT_PACKS = [
     {
         "volts": 100,
@@ -52,34 +46,18 @@ VOLT_PACKS = [
     }
 ]
 
-user_volts = {}             # user_id: nombre de Volts
-user_badges = {}            # user_id: liste de badges
-user_sales = {}             # user_id: nombre de ventes
-user_loots = {}             # user_id: items lootés
-purchase_history = {}       # user_id: [ {"volts":, "prix":, "date":, "pack":} ]
-ticket_counter = 1          # ticket numéro auto-incrémenté
-
-RANKS = [
-    ("Explorateur", 0, "🧭", 0x888888),
-    ("Businessman", 1000, "💼", 0xdb143c),
-    ("Légende", 5000, "👑", 0xffd700),
-    ("Mythique", 20000, "💎", 0x00ffff)
-]
-
-def get_user_rank(user_id):
-    volts = user_volts.get(user_id, 0)
-    rank_name, emoji, color = RANKS[0][0], RANKS[0][2], RANKS[0][3]
-    for name, threshold, emj, col in RANKS:
-        if volts >= threshold:
-            rank_name, emoji, color = name, emj, col
-    return rank_name, emoji, color
+user_volts = {}
+user_badges = {}
+user_sales = {}
+user_loots = {}
+purchase_history = {}
 
 def format_volts(volts): return f"{volts} ⚡"
 
 # ───────────── BOT SETUP ─────────────
 class Sentinelle(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix="!", intents=discord.Intents.all())
     async def setup_hook(self):
         guild = discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild)
@@ -94,21 +72,28 @@ async def on_ready():
 
 # ───────────── BOUTIQUE VOLTS / TICKETS ─────────────
 
+def get_next_ticket_number(guild):
+    nums = []
+    for c in guild.text_channels:
+        if c.name.startswith("ticket-achat-"):
+            try:
+                n = int(c.name.split("-")[-1])
+                nums.append(n)
+            except: pass
+    return max(nums + [0]) + 1
+
 class BuyVoltsView(View):
     def __init__(self, user):
         super().__init__(timeout=120)
         self.user = user
         for pack in VOLT_PACKS:
-            btn = BuyVoltsButton(pack, user)
-            self.add_item(btn)
+            self.add_item(BuyVoltsButton(pack, user))
 
 class BuyVoltsButton(Button):
     def __init__(self, pack, user):
         super().__init__(
             label=f"{pack['volts']}⚡ — {pack['prix']}€",
-            style=discord.ButtonStyle.success,
-            custom_id=f"buyvolts_{pack['volts']}",
-            row=0
+            style=discord.ButtonStyle.success
         )
         self.pack = pack
         self.user = user
@@ -116,13 +101,12 @@ class BuyVoltsButton(Button):
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id != self.user.id:
             return await interaction.response.send_message("Ce menu n'est pas à toi.", ephemeral=True)
-        global ticket_counter
-
         guild = interaction.guild
-        admin_role = discord.utils.get(guild.roles, permissions=discord.Permissions(administrator=True))
+        ticket_number = get_next_ticket_number(guild)
         category = discord.utils.get(guild.categories, name="tickets")
         if not category:
             category = await guild.create_category("tickets")
+        admin_role = discord.utils.get(guild.roles, id=ADMIN_ROLE_ID)
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             self.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
@@ -130,17 +114,12 @@ class BuyVoltsButton(Button):
         }
         if admin_role:
             overwrites[admin_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-
-        ticket_number = ticket_counter
-        ticket_counter += 1
-
         channel_name = f"ticket-achat-{self.user.display_name.lower().replace(' ', '-')}-{ticket_number}"
         ticket_channel = await guild.create_text_channel(
             name=channel_name,
             overwrites=overwrites,
             category=category
         )
-
         embed = discord.Embed(
             title=f"💸 Achat de Volts — Confirmation",
             description=(
@@ -157,13 +136,12 @@ class BuyVoltsButton(Button):
         )
         embed.set_image(url=self.pack["image_url"])
         embed.set_footer(text="La Planque • Sentinelle")
-
-        await ticket_channel.send(content=f"{self.user.mention} Ticket ouvert pour achat de Volts.", embed=embed)
+        await ticket_channel.send(content=f"{self.user.mention} Ticket ouvert pour achat de Volts #{ticket_number}.", embed=embed)
         await interaction.response.send_message(
             f"✅ Ticket d’achat ouvert ici : {ticket_channel.mention}\nMerci de suivre les instructions dans le salon !",
             ephemeral=True
         )
-        # Auto-close dans 2h si pas de message d’un admin (ou custom délai)
+        await announce_purchase(guild, self.user, self.pack)
         bot.loop.create_task(close_ticket_auto(ticket_channel, self.user, delay=7200))
 
 async def close_ticket_auto(channel, user, delay=7200):
@@ -174,27 +152,20 @@ async def close_ticket_auto(channel, user, delay=7200):
     except:
         pass
 
-@bot.tree.command(name="buyvolts", description="Acheter des Volts (paiement PayPal/Revolut)")
+@bot.tree.command(name="buyvolts", description="Boutique Volts (paiement PayPal/Revolut)")
 async def buyvolts_slash(interaction: discord.Interaction):
-    for pack in VOLT_PACKS:
-        embed = discord.Embed(
-            title=f"{pack['volts']} Volts — {pack['prix']}€",
-            description=(
-                f"{pack['desc']}  \n{pack['bonus']}\n\n"
-                "Paiement **PayPal (entre amis)** ou **Revolut** accepté."
-            ),
-            color=0x00ffff
-        )
-        embed.set_image(url=pack["image_url"])
-        embed.set_footer(text="Clique sur le bouton ci-dessous pour ouvrir un ticket d'achat.")
-        await interaction.user.send(embed=embed)  # DM branding, premium effect
-
-    view = BuyVoltsView(interaction.user)
-    await interaction.response.send_message(
-        content="Boutique Volts : choisis ton pack ci-dessous pour ouvrir un ticket d’achat sécurisé.",
-        view=view,
-        ephemeral=True
+    embed = discord.Embed(
+        title="⚡ Boutique Volts : choisis ton pack ci-dessous pour ouvrir un ticket d’achat sécurisé.",
+        description=(
+            "• Offre 100% privée, instantanée, réservée aux membres La Planque.\n"
+            "• Paiement **PayPal (entre amis)** ou **Revolut** accepté.\n"
+            "• Aucune limite d’achat. Conversion immédiate.\n\n"
+            "Clique sur le pack qui te correspond."
+        ),
+        color=0x00ffff
     )
+    embed.set_footer(text="La Planque • Sentinelle")
+    await interaction.response.send_message(view=BuyVoltsView(interaction.user), embed=embed, ephemeral=True)
 
 # ───────────── FOMO — ANNONCE D'ACHAT PUBLIC ─────────────
 
@@ -240,31 +211,31 @@ async def history_slash(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ───────────── COMMANDES UTILISATEURS ─────────────
+
 @bot.tree.command(name="volts", description="Affiche ton solde de Volts")
 async def volts_slash(interaction: discord.Interaction):
     volts = user_volts.get(interaction.user.id, 0)
     await interaction.response.send_message(
-        f"**Solde Volts : `{format_volts(volts)}`\nUtilise `/shop` ou `/buyvolts` pour acheter.", ephemeral=True
+        f"**Solde Volts : `{format_volts(volts)}`\nUtilise `/buyvolts` pour acheter.", ephemeral=True
     )
 
 @bot.tree.command(name="profil", description="Affiche ton profil Sentinelle")
 async def profil_slash(interaction: discord.Interaction):
     uid = interaction.user.id
-    rank, emoji, color = get_user_rank(uid)
     volts = user_volts.get(uid, 0)
-    sales = user_sales.get(uid, 0)
     badges = ", ".join(user_badges.get(uid, [])) or "Aucun"
+    sales = user_sales.get(uid, 0)
     embed = discord.Embed(
-        title=f"{emoji} Profil de {interaction.user.display_name}",
-        color=color
+        title=f"Profil de {interaction.user.display_name}",
+        color=0x00ffff
     )
-    embed.add_field(name="Rang", value=rank, inline=True)
     embed.add_field(name="Volts", value=f"{volts} ⚡", inline=True)
     embed.add_field(name="Ventes réalisées", value=sales, inline=True)
     embed.add_field(name="Badges", value=badges, inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ───────────── COMMANDES ADMIN (gestion Volts) ─────────────
+
 @bot.tree.command(name="givevolts", description="(Admin) Donne des Volts à un membre")
 @app_commands.checks.has_permissions(administrator=True)
 async def givevolts_slash(interaction: discord.Interaction, membre: discord.Member, amount: int):
