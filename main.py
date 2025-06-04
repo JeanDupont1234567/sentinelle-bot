@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 # ───────────── CONFIGURATION DE BASE ─────────────
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = 1376941684147097660  # Remplace par l'ID de ta guilde
+GUILD_ID = 1376941684147097660
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -202,7 +202,7 @@ VOLT_PACKS = [
     {
         "volts": 1000,
         "prix": 8.99,
-        "image_url": "https://cdn.discordapp.com/attachments/1379938265079218206/1379938998880964720/100V.png",  # mets ton image ici
+        "image_url": "https://cdn.discordapp.com/attachments/1379938265079218206/1379938998880964720/100V.png",
         "desc": "Idéal pour tester la puissance ⚡"
     },
     {
@@ -288,28 +288,19 @@ class BuyVoltsButton(Button):
 
 @bot.tree.command(name="buyvolts", description="Acheter des Volts (paiement PayPal/Revolut)")
 async def buyvolts_slash(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="⚡ Boutique Volts",
-        description=(
-            "Sélectionne le pack qui te correspond.\n"
-            "Paiement **PayPal** (entre amis) ou **Revolut** accepté.\n"
-            "*Clique sur un bouton pour ouvrir un ticket avec un admin.*"
-        ),
-        color=0x00ffff
-    )
-    embed.set_thumbnail(url="https://yourcdn.com/logo-premium.png")  # Branding principal ici
+    # Un embed par pack, chacun avec image et bouton en dessous
+    embeds = []
     for pack in VOLT_PACKS:
-        embed.add_field(
-            name=f"{pack['volts']} Volts — {pack['prix']}€",
-            value=f"{pack['desc']}\n",
-            inline=False
+        embed = discord.Embed(
+            title=f"{pack['volts']} Volts — {pack['prix']}€",
+            description=pack["desc"] + "\n\nPaiement **PayPal (entre amis)** ou **Revolut** accepté.",
+            color=0x00ffff
         )
-    embed.set_footer(text="La Planque • Sentinelle")
-    await interaction.response.send_message(
-        embed=embed,
-        view=BuyVoltsView(interaction.user),
-        ephemeral=True
-    )
+        embed.set_image(url=pack["image_url"])
+        embed.set_footer(text="Clique sur le bouton ci-dessous pour ouvrir un ticket d'achat.")
+        embeds.append(embed)
+    view = BuyVoltsView(interaction.user)
+    await interaction.response.send_message(embeds=embeds, view=view, ephemeral=True)
 
 # ───────────── COMMANDES UTILISATEURS ─────────────
 @bot.tree.command(name="shop", description="Ouvre la boutique interactive")
@@ -339,7 +330,7 @@ async def shop_slash(interaction: discord.Interaction):
 async def volts_slash(interaction: discord.Interaction):
     volts = user_volts.get(interaction.user.id, 0)
     await interaction.response.send_message(
-        f"**Solde Volts : `{format_volts(volts)}`**\nUtilise `/shop` pour acheter.", ephemeral=True
+        f"**Solde Volts : `{format_volts(volts)}`\nUtilise `/shop` ou `/buyvolts` pour acheter.", ephemeral=True
     )
 
 @bot.tree.command(name="profil", description="Affiche ton profil Sentinelle")
