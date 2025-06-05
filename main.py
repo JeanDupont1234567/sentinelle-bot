@@ -180,6 +180,8 @@ async def announce_purchase(guild, user, pack):
             embed.set_image(url=pack["image_url"])
             await chan.send(embed=embed)
             break
+    # Stocke l'achat dans l'historique utilisateur
+    add_purchase_history(user.id, pack)
 
 # ───────────── HISTORIQUE DES ACHATS ─────────────
 
