@@ -1,9 +1,8 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 from discord.ui import View, Button
 import os
-import random
+import json
 from dotenv import load_dotenv
 import asyncio
 from datetime import datetime
@@ -14,6 +13,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = 1376941684147097660
 ADMIN_ROLE_ID = 1376941690309976065  # Remplace par l’ID du rôle admin de ton serveur
 ANNOUNCE_CHANNEL = "achats-publics"
+DATA_FILE = "data.json"
 
 VOLT_PACKS = [
     {
@@ -47,12 +47,23 @@ VOLT_PACKS = [
 ]
 
 user_volts = {}
-user_badges = {}
-user_sales = {}
-user_loots = {}
 purchase_history = {}
 
-def format_volts(volts): return f"{volts} ⚡"
+def load_data():
+    global user_volts, purchase_history
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            user_volts = data.get("user_volts", {})
+            purchase_history = data.get("purchase_history", {})
+
+def save_data():
+    data = {
+        "user_volts": user_volts,
+        "purchase_history": purchase_history,
+    }
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f)
 
 # ───────────── BOT SETUP ─────────────
 class Sentinelle(commands.Bot):
@@ -64,6 +75,7 @@ class Sentinelle(commands.Bot):
         await self.tree.sync(guild=guild)
         print("Slash commands synchronisées.")
 
+load_data()
 bot = Sentinelle()
 
 @bot.event
@@ -142,6 +154,9 @@ class BuyVoltsButton(Button):
             ephemeral=True
         )
         await announce_purchase(guild, self.user, self.pack)
+        user_volts[self.user.id] = user_volts.get(self.user.id, 0) + self.pack["volts"]
+        add_purchase_history(self.user.id, self.pack)
+        save_data()
         bot.loop.create_task(close_ticket_auto(ticket_channel, self.user, delay=7200))
 
 async def close_ticket_auto(channel, user, delay=7200):
@@ -192,70 +207,6 @@ def add_purchase_history(user_id, pack):
         "pack": pack
     })
 
-@bot.tree.command(name="history", description="Consulte ton historique d’achats Volts")
-async def history_slash(interaction: discord.Interaction):
-    uid = interaction.user.id
-    histo = purchase_history.get(uid, [])
-    if not histo:
-        return await interaction.response.send_message("Aucun achat de Volts enregistré.", ephemeral=True)
-    embed = discord.Embed(
-        title="🧾 Historique d’achats Volts",
-        color=0x00ffff
-    )
-    for entry in histo[-10:]:
-        embed.add_field(
-            name=f"{entry['volts']}⚡ — {entry['prix']}€",
-            value=f"{entry['date']} • {entry['pack']['desc']}",
-            inline=False
-        )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-# ───────────── COMMANDES UTILISATEURS ─────────────
-
-@bot.tree.command(name="volts", description="Affiche ton solde de Volts")
-async def volts_slash(interaction: discord.Interaction):
-    volts = user_volts.get(interaction.user.id, 0)
-    await interaction.response.send_message(
-        f"**Solde Volts : `{format_volts(volts)}`\nUtilise `/buyvolts` pour acheter.", ephemeral=True
-    )
-
-@bot.tree.command(name="profil", description="Affiche ton profil Sentinelle")
-async def profil_slash(interaction: discord.Interaction):
-    uid = interaction.user.id
-    volts = user_volts.get(uid, 0)
-    badges = ", ".join(user_badges.get(uid, [])) or "Aucun"
-    sales = user_sales.get(uid, 0)
-    embed = discord.Embed(
-        title=f"Profil de {interaction.user.display_name}",
-        color=0x00ffff
-    )
-    embed.add_field(name="Volts", value=f"{volts} ⚡", inline=True)
-    embed.add_field(name="Ventes réalisées", value=sales, inline=True)
-    embed.add_field(name="Badges", value=badges, inline=False)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-# ───────────── COMMANDES ADMIN (gestion Volts) ─────────────
-
-@bot.tree.command(name="givevolts", description="(Admin) Donne des Volts à un membre")
-@app_commands.checks.has_permissions(administrator=True)
-async def givevolts_slash(interaction: discord.Interaction, membre: discord.Member, amount: int):
-    if amount <= 0: return await interaction.response.send_message("Montant invalide.", ephemeral=True)
-    user_volts[membre.id] = user_volts.get(membre.id, 0) + amount
-    await interaction.response.send_message(f"{amount} Volts ajoutés à **{membre.display_name}** ({format_volts(user_volts[membre.id])})", ephemeral=True)
-
-@bot.tree.command(name="removevolts", description="(Admin) Retire des Volts à un membre")
-@app_commands.checks.has_permissions(administrator=True)
-async def removevolts_slash(interaction: discord.Interaction, membre: discord.Member, amount: int):
-    if amount <= 0: return await interaction.response.send_message("Montant invalide.", ephemeral=True)
-    user_volts[membre.id] = max(0, user_volts.get(membre.id, 0) - amount)
-    await interaction.response.send_message(f"{amount} Volts retirés à **{membre.display_name}** ({format_volts(user_volts[membre.id])})", ephemeral=True)
-
-@bot.tree.command(name="setvolts", description="(Admin) Définit le solde Volts d’un membre")
-@app_commands.checks.has_permissions(administrator=True)
-async def setvolts_slash(interaction: discord.Interaction, membre: discord.Member, amount: int):
-    if amount < 0: return await interaction.response.send_message("Montant invalide.", ephemeral=True)
-    user_volts[membre.id] = amount
-    await interaction.response.send_message(f"Solde Volts de **{membre.display_name}** mis à **{format_volts(amount)}**", ephemeral=True)
 
 # ───────────── LANCEMENT DU BOT ─────────────
 bot.run(TOKEN)
