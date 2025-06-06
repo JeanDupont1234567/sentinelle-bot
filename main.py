@@ -3,10 +3,14 @@ from discord.ext import commands
 from discord.ui import View, Button
 import os
 import requests
-#Update 06/06/25
+
+# Update 06/06/25
 
 # -------- CONFIG --------
 TOKEN = os.getenv("DISCORD_TOKEN")
+if not TOKEN:
+    print("❌ DISCORD_TOKEN non défini dans les variables d'environnement !")
+    exit(1)
 GUILD_ID = 1376941684147097660
 
 # → Remplace ceci par ton endpoint Apps Script déployé
@@ -18,19 +22,31 @@ user_carts = {}  # user_id: { "produit_id": { ... }, ... }
 # --------- FONCTIONS GOOGLE SHEETS ---------
 def fetch_products():
     """Récupère tous les produits du Google Sheets"""
-    r = requests.get(SHEET_API_URL)
-    if r.status_code != 200:
+    try:
+        r = requests.get(SHEET_API_URL, timeout=8)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        print(f"[ERREUR FETCH_PRODUCTS] {e}")
         return []
-    return r.json()
 
 def get_categories_and_products():
-    """Renvoie {catégorie: [produits, ...]}"""
+    """Renvoie {catégorie: [produits, ...]} avec debug print"""
     data = fetch_products()
+    print("\n=== Données reçues de Sheets ===")
+    for p in data:
+        print(p)
     categories = {}
     for p in data:
-        cat = p["catégorie"]
-        if p["stock"] and int(p["stock"]) > 0:
+        cat = p.get("catégorie", "").strip()  # Robustesse sur la clé et nettoyage
+        stock = str(p.get("stock", "0")).strip()
+        try:
+            stock_int = int(float(stock))  # accepte "2.0" ou "2"
+        except Exception:
+            stock_int = 0
+        if cat and stock_int > 0:
             categories.setdefault(cat, []).append(p)
+    print("=== Catégories générées ===", categories.keys())
     return categories
 
 def update_stock(product_id, new_stock, commande_en_cours):
@@ -40,7 +56,11 @@ def update_stock(product_id, new_stock, commande_en_cours):
         "stock": new_stock,
         "commande_en_cours": commande_en_cours
     }
-    requests.post(SHEET_API_URL, json=payload)
+    try:
+        r = requests.post(SHEET_API_URL, json=payload, timeout=8)
+        print(f"Update stock : {payload} → {r.text}")
+    except Exception as e:
+        print(f"[ERREUR update_stock] {e}")
 
 # -------- BOT SETUP --------
 intents = discord.Intents.default()
@@ -91,7 +111,12 @@ def render_panier_embed(user_id):
     )
     total = 0
     for uid, p in cart.items():
-        nom, prix, qty = p["nom_produit"], float(p["prix (€)"]), p["qty"]
+        nom = p.get("nom_produit", "??")
+        try:
+            prix = float(str(p.get("prix (€)", "0")).replace(",", "."))
+        except Exception:
+            prix = 0
+        qty = p.get("qty", 0)
         embed.add_field(
             name=f"{nom} x{qty}",
             value=f"{prix:.2f}€ • Total : {prix*qty:.2f}€",
@@ -138,13 +163,19 @@ async def show_product_carousel(interaction, cat, page, user):
     for idx, p in enumerate(produits_page, start=start):
         uid = produit_uid(cat, idx)
         panier_qty = get_cart(user.id).get(uid, {}).get("qty", 0)
+        try:
+            prix = float(str(p.get("prix (€)", "0")).replace(",", "."))
+        except Exception:
+            prix = 0
         txt = (
-            f"**{p['nom_produit']}**\n"
-            f"Prix : {float(p['prix (€)']):.2f}€ | Stock : {p['stock']}\n"
+            f"**{p.get('nom_produit', '??')}**\n"
+            f"Prix : {prix:.2f}€ | Stock : {p.get('stock', '?')}\n"
             f"Dans ton panier : {panier_qty}"
         )
         embed.add_field(name=f"#{idx+1}", value=txt, inline=False)
-        embed.set_image(url=p["image_url"])
+        img = p.get("image_url", "")
+        if img:
+            embed.set_image(url=img)
     await interaction.response.edit_message(embed=embed, view=view)
 
 class ProductCarouselView(View):
@@ -171,7 +202,7 @@ class AddProductButton(Button):
     def __init__(self, cat, idx, user):
         categories = get_categories_and_products()
         produits = categories.get(cat, [])
-        produit_name = produits[idx]["nom_produit"] if idx < len(produits) else "Produit"
+        produit_name = produits[idx].get("nom_produit", "Produit") if idx < len(produits) else "Produit"
         super().__init__(label=f"+{produit_name}", style=discord.ButtonStyle.success, row=idx%5)
         self.cat = cat
         self.idx = idx
@@ -192,7 +223,7 @@ class RemoveProductButton(Button):
     def __init__(self, cat, idx, user):
         categories = get_categories_and_products()
         produits = categories.get(cat, [])
-        produit_name = produits[idx]["nom_produit"] if idx < len(produits) else "Produit"
+        produit_name = produits[idx].get("nom_produit", "Produit") if idx < len(produits) else "Produit"
         super().__init__(label=f"-{produit_name}", style=discord.ButtonStyle.danger, row=idx%5)
         self.cat = cat
         self.idx = idx
@@ -238,12 +269,13 @@ class CommanderButton(Button):
         super().__init__(label="✅ Commander", style=discord.ButtonStyle.success)
         self.user = user
     async def callback(self, interaction):
-        # Ici : update du stock sur Google Sheets
         cart = get_cart(self.user.id)
         for uid, p in cart.items():
             try:
-                product_id = int(p["id"])
-                new_stock = int(p["stock"]) - p["qty"]
+                product_id = int(p.get("id", 0))
+                stock = str(p.get("stock", "0")).strip()
+                stock_int = int(float(stock))
+                new_stock = stock_int - p.get("qty", 0)
                 new_cmd_en_cours = 0  # ou adapte selon ta logique
                 update_stock(product_id, new_stock, new_cmd_en_cours)
             except Exception as e:
@@ -265,4 +297,7 @@ async def shop_slash(interaction: discord.Interaction):
 
 # --------- LANCEMENT ---------
 if __name__ == "__main__":
+    print("==== Sentinelle bot starting... ====")
+    print("TOKEN:", "OK" if TOKEN else "MISSING")
+    print("API SHEET:", SHEET_API_URL)
     bot.run(TOKEN)
