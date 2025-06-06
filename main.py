@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord.ui import View, Button
 import os
 import requests
+#Update 06/06/25
 
 # -------- CONFIG --------
 TOKEN = os.getenv("DISCORD_TOKEN")
