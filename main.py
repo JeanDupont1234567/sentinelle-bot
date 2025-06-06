@@ -2,51 +2,44 @@ import discord
 from discord.ext import commands
 from discord.ui import View, Button
 import os
+import requests
 
 # -------- CONFIG --------
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = 1376941684147097660
 
-CATEGORIES = {
-    "T-shirts": [
-        {
-            "nom": "Nike x Stussy Concept",
-            "prix": 34.99,
-            "stock": 8,
-            "image": "https://exemple.com/nike_stussy.png"
-        },
-        {
-            "nom": "Maillot PSG 23/24",
-            "prix": 59.99,
-            "stock": 2,
-            "image": "https://exemple.com/psg2324.png"
-        },
-        {
-            "nom": "Maillot Vintage Italie 90",
-            "prix": 39.99,
-            "stock": 7,
-            "image": "https://exemple.com/italie90.png"
-        }
-    ],
-    "Sneakers": [
-        {
-            "nom": "Nike Dunk Low Panda",
-            "prix": 119.99,
-            "stock": 3,
-            "image": "https://exemple.com/dunk_panda.png"
-        },
-        {
-            "nom": "Adidas Samba OG",
-            "prix": 129.99,
-            "stock": 4,
-            "image": "https://exemple.com/sambaog.png"
-        }
-    ]
-}
-CATEGORY_LIST = list(CATEGORIES.keys())
-ITEMS_PER_PAGE = 3
+# → Remplace ceci par ton endpoint Apps Script déployé
+SHEET_API_URL = "https://script.google.com/macros/s/AKfycbwIQcJhrFbsNYucVaLXlgezBniPVpJvUcxzrsxJD3ZcuJb58MBdfc-WCYJjDyL3o7Rvbg/exec"
 
+ITEMS_PER_PAGE = 3
 user_carts = {}  # user_id: { "produit_id": { ... }, ... }
+
+# --------- FONCTIONS GOOGLE SHEETS ---------
+def fetch_products():
+    """Récupère tous les produits du Google Sheets"""
+    r = requests.get(SHEET_API_URL)
+    if r.status_code != 200:
+        return []
+    return r.json()
+
+def get_categories_and_products():
+    """Renvoie {catégorie: [produits, ...]}"""
+    data = fetch_products()
+    categories = {}
+    for p in data:
+        cat = p["catégorie"]
+        if p["stock"] and int(p["stock"]) > 0:
+            categories.setdefault(cat, []).append(p)
+    return categories
+
+def update_stock(product_id, new_stock, commande_en_cours):
+    """Met à jour le stock d'un produit"""
+    payload = {
+        "id": product_id,
+        "stock": new_stock,
+        "commande_en_cours": commande_en_cours
+    }
+    requests.post(SHEET_API_URL, json=payload)
 
 # -------- BOT SETUP --------
 intents = discord.Intents.default()
@@ -97,7 +90,7 @@ def render_panier_embed(user_id):
     )
     total = 0
     for uid, p in cart.items():
-        nom, prix, qty = p["nom"], p["prix"], p["qty"]
+        nom, prix, qty = p["nom_produit"], float(p["prix (€)"]), p["qty"]
         embed.add_field(
             name=f"{nom} x{qty}",
             value=f"{prix:.2f}€ • Total : {prix*qty:.2f}€",
@@ -111,10 +104,11 @@ def render_panier_embed(user_id):
     return embed
 
 class CategoryView(View):
-    def __init__(self, user):
+    def __init__(self, user, categories):
         super().__init__(timeout=120)
         self.user = user
-        for cat in CATEGORY_LIST:
+        self.categories = categories
+        for cat in categories.keys():
             self.add_item(CategoryButton(cat, user))
         self.add_item(Button(label="Bientôt...", disabled=True, style=discord.ButtonStyle.secondary))
 
@@ -129,7 +123,8 @@ class CategoryButton(Button):
         await show_product_carousel(interaction, self.cat, 0, self.user)
 
 async def show_product_carousel(interaction, cat, page, user):
-    produits = CATEGORIES[cat]
+    categories = get_categories_and_products()
+    produits = categories.get(cat, [])
     start = page * ITEMS_PER_PAGE
     end = min(start+ITEMS_PER_PAGE, len(produits))
     produits_page = produits[start:end]
@@ -143,12 +138,12 @@ async def show_product_carousel(interaction, cat, page, user):
         uid = produit_uid(cat, idx)
         panier_qty = get_cart(user.id).get(uid, {}).get("qty", 0)
         txt = (
-            f"**{p['nom']}**\n"
-            f"Prix : {p['prix']:.2f}€ | Stock : {p['stock']}\n"
+            f"**{p['nom_produit']}**\n"
+            f"Prix : {float(p['prix (€)']):.2f}€ | Stock : {p['stock']}\n"
             f"Dans ton panier : {panier_qty}"
         )
         embed.add_field(name=f"#{idx+1}", value=txt, inline=False)
-        embed.set_image(url=p["image"])
+        embed.set_image(url=p["image_url"])
     await interaction.response.edit_message(embed=embed, view=view)
 
 class ProductCarouselView(View):
@@ -157,7 +152,8 @@ class ProductCarouselView(View):
         self.cat = cat
         self.page = page
         self.user = user
-        produits = CATEGORIES[cat]
+        categories = get_categories_and_products()
+        produits = categories.get(cat, [])
         start = page * ITEMS_PER_PAGE
         end = min(start+ITEMS_PER_PAGE, len(produits))
         for idx in range(start, end):
@@ -172,21 +168,31 @@ class ProductCarouselView(View):
 
 class AddProductButton(Button):
     def __init__(self, cat, idx, user):
-        super().__init__(label=f"+{CATEGORIES[cat][idx]['nom']}", style=discord.ButtonStyle.success, row=idx%5)
+        categories = get_categories_and_products()
+        produits = categories.get(cat, [])
+        produit_name = produits[idx]["nom_produit"] if idx < len(produits) else "Produit"
+        super().__init__(label=f"+{produit_name}", style=discord.ButtonStyle.success, row=idx%5)
         self.cat = cat
         self.idx = idx
         self.user = user
     async def callback(self, interaction):
         if interaction.user.id != self.user.id:
             return await interaction.response.send_message("Ce menu n'est pas à toi.", ephemeral=True)
-        produit = CATEGORIES[self.cat][self.idx]
+        categories = get_categories_and_products()
+        produits = categories.get(self.cat, [])
+        if self.idx >= len(produits):
+            return await interaction.response.send_message("Produit non disponible.", ephemeral=True)
+        produit = produits[self.idx]
         uid = produit_uid(self.cat, self.idx)
         add_to_cart(self.user.id, uid, produit, 1)
         await show_product_carousel(interaction, self.cat, self.idx//ITEMS_PER_PAGE, self.user)
 
 class RemoveProductButton(Button):
     def __init__(self, cat, idx, user):
-        super().__init__(label=f"-{CATEGORIES[cat][idx]['nom']}", style=discord.ButtonStyle.danger, row=idx%5)
+        categories = get_categories_and_products()
+        produits = categories.get(cat, [])
+        produit_name = produits[idx]["nom_produit"] if idx < len(produits) else "Produit"
+        super().__init__(label=f"-{produit_name}", style=discord.ButtonStyle.danger, row=idx%5)
         self.cat = cat
         self.idx = idx
         self.user = user
@@ -231,15 +237,24 @@ class CommanderButton(Button):
         super().__init__(label="✅ Commander", style=discord.ButtonStyle.success)
         self.user = user
     async def callback(self, interaction):
-        # Ici tu mets ta logique de validation de commande (ou génération de ticket)
+        # Ici : update du stock sur Google Sheets
+        cart = get_cart(self.user.id)
+        for uid, p in cart.items():
+            try:
+                product_id = int(p["id"])
+                new_stock = int(p["stock"]) - p["qty"]
+                new_cmd_en_cours = 0  # ou adapte selon ta logique
+                update_stock(product_id, new_stock, new_cmd_en_cours)
+            except Exception as e:
+                print(f"Erreur update stock : {e}")
         await interaction.response.send_message("Merci pour ta commande ! Un admin va la traiter.", ephemeral=True)
         user_carts[self.user.id] = {}  # reset panier
 
 # --------- /SHOP COMMAND ---------
-
 @bot.tree.command(name="shop", description="Ouvre la boutique complète")
 async def shop_slash(interaction: discord.Interaction):
-    view = CategoryView(interaction.user)
+    categories = get_categories_and_products()
+    view = CategoryView(interaction.user, categories)
     embed = discord.Embed(
         title="🛒 Bienvenue dans la boutique La Planque",
         description="Choisis une catégorie pour découvrir les produits.",
